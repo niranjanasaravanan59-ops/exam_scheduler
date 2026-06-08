@@ -55,10 +55,11 @@ function SummaryTile({ label, value, tone = 'slate' }) {
 
 function ResultStatusBadge({ status }) {
   const config = {
-    draft: { label: 'Not ready', cls: 'bg-amber-100 text-amber-800' },
-    ready: { label: 'Ready', cls: 'bg-violet-100 text-violet-800' },
-    published: { label: 'Published', cls: 'bg-emerald-100 text-emerald-800' },
+    draft: { label: 'Draft', cls: 'bg-gray-100 text-gray-700' },
+    ready: { label: 'Ready', cls: 'bg-yellow-100 text-yellow-800' },
+    published: { label: 'Published', cls: 'bg-green-100 text-green-800' },
     not_entered: { label: 'Not entered', cls: 'bg-slate-100 text-slate-500' },
+    blocked: { label: 'Blocked', cls: 'bg-red-100 text-red-700' },
   };
   const cfg = config[status] || { label: status, cls: 'bg-slate-100 text-slate-600' };
 
@@ -175,6 +176,7 @@ export default function AdminResultDetail() {
             <option value="draft">Not Ready</option>
             <option value="ready">Ready</option>
             <option value="published">Published</option>
+            <option value="blocked">Blocked</option>
           </select>
           <label className="sr-only" htmlFor="student-name-filter">Search student name</label>
           <input
@@ -215,61 +217,68 @@ export default function AdminResultDetail() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {results.map((result) => (
-                <tr key={result.id} className="hover:bg-blue-50/40">
-                  <td className="px-5 py-4">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-gray-900">{result.student?.name}</p>
-                      <p className="mt-1 truncate text-xs text-gray-500">{result.student?.email}</p>
-                    </div>
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-4 text-gray-600">{result.student?.rollNo || '-'}</td>
-                  <td className="px-4 py-4 text-center font-semibold tabular-nums text-gray-900">{formatMarks(result.marks)}</td>
-                  <td className="px-4 py-4 text-center">
-                    {result.grade ? <GradeBadge grade={result.grade} /> : <span className="text-gray-300">-</span>}
-                  </td>
-                  <td className="px-4 py-4">
-                    <ResultStatusBadge status={result.status} />
-                  </td>
-                  <td className="px-4 py-4">
-                    <div className="flex flex-wrap justify-end gap-2">
-                      {result.status === 'draft' && (
-                        <button
-                          type="button"
-                          onClick={() => handleTransition(result.id, 'ready')}
-                          className="rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
-                        >
-                          Ready
-                        </button>
-                      )}
-                      {result.status === 'ready' && (
-                        <>
+              {results.map((result) => {
+                const absent = result.attendanceStatus === 'absent' || result.status === 'blocked';
+
+                return (
+                  <tr key={result.id} className={absent ? 'bg-red-50/40 hover:bg-red-50' : 'hover:bg-blue-50/40'}>
+                    <td className="px-5 py-4">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-gray-900">{result.student?.name}</p>
+                        <p className="mt-1 truncate text-xs text-gray-500">{result.student?.email}</p>
+                      </div>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-4 text-gray-600">{result.student?.rollNo || '-'}</td>
+                    <td className="px-4 py-4 text-center font-semibold tabular-nums text-gray-900">{formatMarks(result.marks)}</td>
+                    <td className="px-4 py-4 text-center">
+                      {result.grade ? <GradeBadge grade={result.grade} /> : <span className="text-gray-300">-</span>}
+                    </td>
+                    <td className="px-4 py-4">
+                      <ResultStatusBadge status={result.status} />
+                    </td>
+                    <td className="px-4 py-4">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {result.status === 'draft' && (
                           <button
                             type="button"
-                            onClick={() => handleTransition(result.id, 'published')}
-                            className="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                            onClick={() => handleTransition(result.id, 'ready')}
+                            className="rounded-md bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100"
                           >
-                            Publish
+                            Ready
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => handleTransition(result.id, 'draft')}
-                            className="rounded-md bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
-                          >
-                            Back to Draft
-                          </button>
-                        </>
-                      )}
-                      {result.status === 'published' && (
-                        <span className="text-xs font-medium text-gray-400">Published</span>
-                      )}
-                      {result.status === 'not_entered' && (
-                        <span className="text-xs font-medium text-gray-400">No marks</span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                        )}
+                        {result.status === 'ready' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleTransition(result.id, 'published')}
+                              className="rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                            >
+                              Publish
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleTransition(result.id, 'draft')}
+                              className="rounded-md bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-200"
+                            >
+                              Back to Draft
+                            </button>
+                          </>
+                        )}
+                        {result.status === 'published' && (
+                          <span className="text-xs font-medium text-gray-400">Published</span>
+                        )}
+                        {result.status === 'not_entered' && (
+                          <span className="text-xs font-medium text-gray-400">No marks</span>
+                        )}
+                        {absent && (
+                          <span className="text-xs font-medium text-red-500">Absent</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

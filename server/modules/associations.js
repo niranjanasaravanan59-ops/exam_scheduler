@@ -1,6 +1,7 @@
 const { User } = require('./auth/authModel');
 const { Exam } = require('./exam/examModel');
 const { Result } = require('./result/resultModel');
+const { Attendance } = require('./attendance/attendanceModel');
 
 const setupAssociations = () => {
   // Exam associations
@@ -16,6 +17,14 @@ const setupAssociations = () => {
 
   User.hasMany(Result, { foreignKey: 'studentId', as: 'results' });
   Exam.hasMany(Result, { foreignKey: 'examId', as: 'results' });
+
+  // Attendance associations
+  Attendance.belongsTo(User, { foreignKey: 'studentId', as: 'student' });
+  Attendance.belongsTo(Exam, { foreignKey: 'examId', as: 'exam' });
+  Attendance.belongsTo(User, { foreignKey: 'markedBy', as: 'marker' });
+
+  User.hasMany(Attendance, { foreignKey: 'studentId', as: 'attendanceRecords' });
+  Exam.hasMany(Attendance, { foreignKey: 'examId', as: 'attendanceRecords' });
 };
 
 module.exports = { setupAssociations };

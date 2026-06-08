@@ -2,9 +2,15 @@ const { Op, fn, col } = require('sequelize');
 const { Exam } = require('../exam/examModel');
 const { Result } = require('../result/resultModel');
 const { User } = require('../auth/authModel');
+const { Attendance, ATTENDANCE_STATUSES } = require('../attendance/attendanceModel');
 const { buildCompletedExamWhere, buildNotCompletedExamWhere } = require('../../utils/examTiming');
 
 const round2 = (value) => parseFloat(Number(value || 0).toFixed(2));
+
+const getAttendedCount = (studentCount, absentCount = 0, resultCount = 0) => {
+  const eligibleStudentCount = Math.max(0, Number(studentCount || 0) - Number(absentCount || 0));
+  return Math.max(Number(resultCount || 0), eligibleStudentCount);
+};
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 const getAdminDashboard = async (req, res, next) => {
@@ -77,13 +83,51 @@ const getAdminPublicationOverview = async (req, res, next) => {
       order: [['subject', 'ASC'], ['examDate', 'DESC'], ['startTime', 'ASC']],
     });
 
+    const completedExamIds = completedExams.map((exam) => exam.id);
+    const [studentCountRows, absentCountRows] = await Promise.all([
+      User.findAll({
+        where: { role: 'student', isActive: true },
+        attributes: ['department', [fn('COUNT', col('id')), 'count']],
+        group: ['department'],
+        raw: true,
+      }),
+      completedExamIds.length
+        ? Attendance.findAll({
+          where: {
+            examId: { [Op.in]: completedExamIds },
+            status: ATTENDANCE_STATUSES.ABSENT,
+          },
+          attributes: ['examId', [fn('COUNT', col('id')), 'count']],
+          group: ['examId'],
+          raw: true,
+        })
+        : [],
+    ]);
+
+    const studentCountsByDepartment = studentCountRows.reduce((acc, row) => {
+      acc[row.department] = parseInt(row.count, 10);
+      return acc;
+    }, {});
+
+    const absentCountsByExam = absentCountRows.reduce((acc, row) => {
+      acc[row.examId] = parseInt(row.count, 10);
+      return acc;
+    }, {});
+
     const exams = completedExams.map((exam) => {
       const plain = exam.toJSON();
       const results = plain.results || [];
-      const totalStudents = results.length;
+      const absentCount = Number(absentCountsByExam[plain.id] || 0);
+      const evaluatedCount = results.length;
+      const totalStudents = getAttendedCount(
+        studentCountsByDepartment[plain.department],
+        absentCount,
+        evaluatedCount
+      );
       const draftCount = results.filter((result) => result.status === 'draft').length;
       const readyCount = results.filter((result) => result.status === 'ready').length;
       const publishedCount = results.filter((result) => result.status === 'published').length;
+      const notReadyCount = Math.max(0, totalStudents - readyCount - publishedCount);
       const failCount = results.filter((result) => result.grade === 'F').length;
       const passCount = results.filter((result) => result.grade && result.grade !== 'F').length;
       const totalMarks = results.reduce((sum, result) => sum + Number(result.marks || 0), 0);
@@ -98,13 +142,17 @@ const getAdminPublicationOverview = async (req, res, next) => {
         endTime: plain.endTime,
         hall: plain.hall,
         totalStudents,
+        absentCount,
+        evaluatedCount,
         draftCount,
+        notReadyCount,
         readyCount,
         publishedCount,
         passCount,
         failCount,
-        passRate: totalStudents > 0 ? round2((passCount / totalStudents) * 100) : 0,
-        averageMarks: totalStudents > 0 ? round2(totalMarks / totalStudents) : 0,
+        totalMarks,
+        passRate: evaluatedCount > 0 ? round2((passCount / evaluatedCount) * 100) : 0,
+        averageMarks: evaluatedCount > 0 ? round2(totalMarks / evaluatedCount) : 0,
       };
     });
 
@@ -114,7 +162,10 @@ const getAdminPublicationOverview = async (req, res, next) => {
           subject: exam.subject,
           completedExams: 0,
           totalStudents: 0,
+          absentCount: 0,
+          evaluatedCount: 0,
           draftCount: 0,
+          notReadyCount: 0,
           readyCount: 0,
           publishedCount: 0,
           passCount: 0,
@@ -126,12 +177,15 @@ const getAdminPublicationOverview = async (req, res, next) => {
 
       acc[exam.subject].completedExams += 1;
       acc[exam.subject].totalStudents += exam.totalStudents;
+      acc[exam.subject].absentCount += exam.absentCount;
+      acc[exam.subject].evaluatedCount += exam.evaluatedCount;
       acc[exam.subject].draftCount += exam.draftCount;
+      acc[exam.subject].notReadyCount += exam.notReadyCount;
       acc[exam.subject].readyCount += exam.readyCount;
       acc[exam.subject].publishedCount += exam.publishedCount;
       acc[exam.subject].passCount += exam.passCount;
       acc[exam.subject].failCount += exam.failCount;
-      acc[exam.subject].totalMarks += exam.averageMarks * exam.totalStudents;
+      acc[exam.subject].totalMarks += exam.totalMarks;
       acc[exam.subject].exams.push(exam);
 
       return acc;
@@ -139,28 +193,34 @@ const getAdminPublicationOverview = async (req, res, next) => {
 
     const groupedSubjects = Object.values(subjects).map((subject) => ({
       ...subject,
-      averageMarks: subject.totalStudents > 0
-        ? round2(subject.totalMarks / subject.totalStudents)
+      averageMarks: subject.evaluatedCount > 0
+        ? round2(subject.totalMarks / subject.evaluatedCount)
         : 0,
-      passRate: subject.totalStudents > 0
-        ? round2((subject.passCount / subject.totalStudents) * 100)
+      passRate: subject.evaluatedCount > 0
+        ? round2((subject.passCount / subject.evaluatedCount) * 100)
         : 0,
       totalMarks: undefined,
     }));
 
     const summary = exams.reduce((acc, exam) => {
       acc.totalStudents += exam.totalStudents;
+      acc.absentCount += exam.absentCount;
+      acc.evaluatedCount += exam.evaluatedCount;
       acc.draftCount += exam.draftCount;
+      acc.notReadyCount += exam.notReadyCount;
       acc.readyCount += exam.readyCount;
       acc.publishedCount += exam.publishedCount;
       acc.passCount += exam.passCount;
       acc.failCount += exam.failCount;
-      acc.totalMarks += exam.averageMarks * exam.totalStudents;
+      acc.totalMarks += exam.totalMarks;
       return acc;
     }, {
       completedExams: exams.length,
       totalStudents: 0,
+      absentCount: 0,
+      evaluatedCount: 0,
       draftCount: 0,
+      notReadyCount: 0,
       readyCount: 0,
       publishedCount: 0,
       passCount: 0,
@@ -170,11 +230,11 @@ const getAdminPublicationOverview = async (req, res, next) => {
 
     const summaryPayload = {
       ...summary,
-      averageMarks: summary.totalStudents > 0
-        ? round2(summary.totalMarks / summary.totalStudents)
+      averageMarks: summary.evaluatedCount > 0
+        ? round2(summary.totalMarks / summary.evaluatedCount)
         : 0,
-      passRate: summary.totalStudents > 0
-        ? round2((summary.passCount / summary.totalStudents) * 100)
+      passRate: summary.evaluatedCount > 0
+        ? round2((summary.passCount / summary.evaluatedCount) * 100)
         : 0,
       totalMarks: undefined,
     };

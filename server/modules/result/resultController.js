@@ -3,18 +3,73 @@ const { validationResult } = require('express-validator');
 const { Result, WORKFLOW_STATES } = require('./resultModel');
 const { Exam } = require('../exam/examModel');
 const { User } = require('../auth/authModel');
+const { Attendance, ATTENDANCE_STATUSES } = require('../attendance/attendanceModel');
 const { sequelize } = require('../../config/db');
 const logger = require('../../config/logger');
 const { isExamCompletedAt } = require('../../utils/examTiming');
 
-const toExamResultSummary = (exam, studentCountsByDepartment = {}) => {
+const isStudentMarkedAbsent = async (studentId, examId, transaction = null) => {
+  const attendance = await Attendance.findOne({
+    where: { studentId, examId },
+    attributes: ['status'],
+    transaction,
+  });
+
+  return attendance?.status === ATTENDANCE_STATUSES.ABSENT;
+};
+
+const rejectAbsentStudentResult = (res) => res.status(403).json({
+  error: {
+    code: 'STUDENT_ABSENT',
+    message: 'Result cannot be entered or published for a student marked absent',
+  },
+});
+
+const getAttendedCount = (studentCount, absentCount = 0, resultCount = 0) => {
+  const numericStudentCount = Number(studentCount || 0);
+  const numericAbsentCount = Number(absentCount || 0);
+  const numericResultCount = Number(resultCount || 0);
+  const eligibleStudentCount = Math.max(0, numericStudentCount - numericAbsentCount);
+
+  return Math.max(numericResultCount, eligibleStudentCount);
+};
+
+const extractSortNumber = (value) => {
+  if (!value) return NaN;
+  const trailing = String(value).match(/(\d+)\s*$/);
+  if (trailing) return parseInt(trailing[1], 10);
+  const first = String(value).match(/(\d+)/);
+  return first ? parseInt(first[1], 10) : NaN;
+};
+
+const compareStudents = (left, right) => {
+  const x = left.student || left;
+  const y = right.student || right;
+
+  if (x.rollNo && y.rollNo) {
+    const xNumber = extractSortNumber(x.rollNo);
+    const yNumber = extractSortNumber(y.rollNo);
+    if (!Number.isNaN(xNumber) && !Number.isNaN(yNumber)) return xNumber - yNumber;
+    return x.rollNo.localeCompare(y.rollNo, undefined, { numeric: true, sensitivity: 'base' });
+  }
+
+  const xNameNumber = extractSortNumber(x.name);
+  const yNameNumber = extractSortNumber(y.name);
+  if (!Number.isNaN(xNameNumber) && !Number.isNaN(yNameNumber)) return xNameNumber - yNameNumber;
+
+  return (x.name || '').localeCompare(y.name || '', undefined, { sensitivity: 'base' });
+};
+
+const toExamResultSummary = (exam, studentCountsByDepartment = {}, absentCountsByExam = {}) => {
   const plain = exam.toJSON();
   const results = plain.results || [];
   const readyCount = results.filter((result) => result.status === WORKFLOW_STATES.READY).length;
   const publishedCount = results.filter((result) => result.status === WORKFLOW_STATES.PUBLISHED).length;
-  const attendedCount = Math.max(
-    results.length,
-    Number(studentCountsByDepartment[plain.department] || 0)
+  const absentCount = Number(absentCountsByExam[plain.id] || 0);
+  const attendedCount = getAttendedCount(
+    studentCountsByDepartment[plain.department],
+    absentCount,
+    results.length
   );
   const notReadyCount = Math.max(0, attendedCount - readyCount - publishedCount);
 
@@ -28,19 +83,22 @@ const toExamResultSummary = (exam, studentCountsByDepartment = {}) => {
     endTime: plain.endTime,
     hall: plain.hall,
     attendedCount,
+    absentCount,
     notReadyCount,
     readyCount,
     publishedCount,
   };
 };
 
-const getResultExamSummary = (results, attendedCount) => {
+const getResultExamSummary = (results, studentCount, absentCount = 0) => {
   const readyCount = results.filter((result) => result.status === WORKFLOW_STATES.READY).length;
   const publishedCount = results.filter((result) => result.status === WORKFLOW_STATES.PUBLISHED).length;
+  const attendedCount = getAttendedCount(studentCount, absentCount, results.length);
   const notReadyCount = Math.max(0, attendedCount - readyCount - publishedCount);
 
   return {
     attendedCount,
+    absentCount,
     notReadyCount,
     readyCount,
     publishedCount,
@@ -99,6 +157,10 @@ const createResult = async (req, res, next) => {
       return res.status(400).json({
         error: { code: 'INVALID_STUDENT', message: 'Student does not belong to this exam department' },
       });
+    }
+
+    if (await isStudentMarkedAbsent(studentId, examId)) {
+      return rejectAbsentStudentResult(res);
     }
 
     const [result, created] = await Result.findOrCreate({
@@ -196,7 +258,7 @@ const getResultExamOverview = async (req, res, next) => {
 
     if (department) examWhere.department = department;
 
-    const [departmentRows, studentCountRows, exams] = await Promise.all([
+    const [departmentRows, studentCountRows, absentCountRows, exams] = await Promise.all([
       Exam.findAll({
         where: { isDeleted: false },
         attributes: ['department'],
@@ -208,6 +270,12 @@ const getResultExamOverview = async (req, res, next) => {
         where: { role: 'student', isActive: true },
         attributes: ['department', [fn('COUNT', col('id')), 'count']],
         group: ['department'],
+        raw: true,
+      }),
+      Attendance.findAll({
+        where: { status: ATTENDANCE_STATUSES.ABSENT },
+        attributes: ['examId', [fn('COUNT', col('id')), 'count']],
+        group: ['examId'],
         raw: true,
       }),
       Exam.findAll({
@@ -230,9 +298,14 @@ const getResultExamOverview = async (req, res, next) => {
       return acc;
     }, {});
 
+    const absentCountsByExam = absentCountRows.reduce((acc, row) => {
+      acc[row.examId] = parseInt(row.count, 10);
+      return acc;
+    }, {});
+
     res.json({
       departments: departmentRows.map((row) => row.department).filter(Boolean),
-      exams: exams.map((exam) => toExamResultSummary(exam, studentCountsByDepartment)),
+      exams: exams.map((exam) => toExamResultSummary(exam, studentCountsByDepartment, absentCountsByExam)),
     });
   } catch (error) {
     next(error);
@@ -272,7 +345,7 @@ const getResultExamDetail = async (req, res, next) => {
       User.findAll({
         where: studentWhere,
         attributes: ['id', 'name', 'email', 'rollNo'],
-        order: [['name', 'ASC']],
+        order: [['rollNo', 'ASC'], ['name', 'ASC']],
       }),
       Result.findAll({
         where: { examId },
@@ -281,23 +354,44 @@ const getResultExamDetail = async (req, res, next) => {
       }),
     ]);
 
+    const allStudentIds = allStudents.map((student) => student.id);
+    const attendanceRows = allStudentIds.length
+      ? await Attendance.findAll({
+        where: { examId, studentId: { [Op.in]: allStudentIds } },
+        attributes: ['studentId', 'status', 'markedAt'],
+        raw: true,
+      })
+      : [];
+
+    const attendanceByStudentId = attendanceRows.reduce((acc, row) => {
+      acc[row.studentId] = row;
+      return acc;
+    }, {});
+
     const resultsByStudentId = allResults.reduce((acc, result) => {
       acc[result.studentId] = result;
       return acc;
     }, {});
 
+    const absentCount = attendanceRows.filter((row) => row.status === ATTENDANCE_STATUSES.ABSENT).length;
     const results = students
       .map((student) => {
         const plainStudent = student.toJSON();
         const result = resultsByStudentId[plainStudent.id];
+        const attendance = attendanceByStudentId[plainStudent.id];
+        const attendanceStatus = attendance?.status || 'unmarked';
+        const isAbsent = attendanceStatus === ATTENDANCE_STATUSES.ABSENT;
 
         return {
           id: result?.id || `pending-${plainStudent.id}`,
           studentId: plainStudent.id,
           examId,
-          marks: result?.marks ?? null,
-          grade: result?.grade ?? null,
-          status: result?.status || 'not_entered',
+          marks: isAbsent ? null : result?.marks ?? null,
+          grade: isAbsent ? null : result?.grade ?? null,
+          status: isAbsent ? 'blocked' : result?.status || 'not_entered',
+          resultStatus: result?.status || null,
+          attendanceStatus,
+          attendanceMarkedAt: attendance?.markedAt || null,
           version: result?.version ?? null,
           remarks: result?.remarks ?? null,
           student: plainStudent,
@@ -306,16 +400,18 @@ const getResultExamDetail = async (req, res, next) => {
       })
       .filter((row) => {
         if (!status) return true;
+        if (status === 'blocked') return row.status === 'blocked';
         if (status === WORKFLOW_STATES.DRAFT) {
           return row.status === WORKFLOW_STATES.DRAFT || row.status === 'not_entered';
         }
         return row.status === status;
-      });
+      })
+      .sort(compareStudents);
 
     res.json({
       exam: {
         ...exam.toJSON(),
-        ...getResultExamSummary(allResults, allStudents.length),
+        ...getResultExamSummary(allResults, allStudents.length, absentCount),
       },
       results,
     });
@@ -378,6 +474,11 @@ const updateResult = async (req, res, next) => {
       return res.status(403).json({
         error: { code: 'FORBIDDEN', message: 'You can only update marks for your assigned subjects' },
       });
+    }
+
+    if (await isStudentMarkedAbsent(result.studentId, result.examId, t)) {
+      await t.rollback();
+      return rejectAbsentStudentResult(res);
     }
 
     // ── Optimistic Concurrency ──
@@ -450,6 +551,10 @@ const transitionResult = async (req, res, next) => {
       });
     }
 
+    if (['ready', 'published'].includes(action) && await isStudentMarkedAbsent(result.studentId, result.examId)) {
+      return rejectAbsentStudentResult(res);
+    }
+
     const VALID_TRANSITIONS = {
       draft: ['ready'],
       ready: ['published', 'draft'],
@@ -516,6 +621,18 @@ const bulkPublishByExam = async (req, res, next) => {
       return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Exam not found' } });
     }
 
+    const absentRows = await Attendance.findAll({
+      where: { examId, status: ATTENDANCE_STATUSES.ABSENT },
+      attributes: ['studentId'],
+      transaction: t,
+      raw: true,
+    });
+    const absentStudentIds = absentRows.map((row) => row.studentId);
+    const publishWhere = { examId, status: 'ready' };
+    if (absentStudentIds.length) {
+      publishWhere.studentId = { [Op.notIn]: absentStudentIds };
+    }
+
     const [updated] = await Result.update(
       {
         status: 'published',
@@ -524,7 +641,7 @@ const bulkPublishByExam = async (req, res, next) => {
         version: sequelize.literal('version + 1'),
       },
       {
-        where: { examId, status: 'ready' },
+        where: publishWhere,
         transaction: t,
       }
     );
@@ -540,7 +657,12 @@ const bulkPublishByExam = async (req, res, next) => {
       meta: { count: updated },
     });
 
-    res.json({ message: `${updated} results published for exam`, examId, count: updated });
+    res.json({
+      message: `${updated} results published for exam`,
+      examId,
+      count: updated,
+      skippedAbsent: absentStudentIds.length,
+    });
   } catch (error) {
     await t.rollback();
     next(error);

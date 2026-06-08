@@ -15,6 +15,7 @@ import AdminUsers from './pages/admin/AdminUsers';
 
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
 import FacultyExams from './pages/faculty/FacultyExams';
+import FacultyExamDetail from './pages/faculty/FacultyExamDetail';
 import FacultyImport from './pages/faculty/FacultyImport';
 import FacultyMarks from './pages/faculty/FacultyMarks';
 
@@ -56,6 +57,7 @@ export default function App() {
       {/* Faculty routes */}
       <Route path="/faculty/dashboard" element={<RequireAuth role="faculty"><FacultyDashboard /></RequireAuth>} />
       <Route path="/faculty/exams"     element={<RequireAuth role="faculty"><FacultyExams /></RequireAuth>} />
+      <Route path="/faculty/exams/:examId" element={<RequireAuth role="faculty"><FacultyExamDetail /></RequireAuth>} />
       <Route path="/faculty/import"    element={<RequireAuth role="faculty"><FacultyImport /></RequireAuth>} />
       <Route path="/faculty/marks"     element={<RequireAuth role="faculty"><FacultyMarks /></RequireAuth>} />
 

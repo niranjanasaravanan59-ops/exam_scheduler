@@ -3,6 +3,7 @@ const { connectDB, sequelize } = require('../config/db');
 const { User } = require('../modules/auth/authModel');
 const { Exam } = require('../modules/exam/examModel');
 const { Result, computeGrade } = require('../modules/result/resultModel');
+const { Attendance } = require('../modules/attendance/attendanceModel');
 const { setupAssociations } = require('../modules/associations');
 
 const ADMIN_USERS = [
@@ -109,6 +110,7 @@ const makeStudentUsers = (department) => Array.from({ length: 50 }, (_, index) =
 });
 
 const clearDatabase = async (transaction) => {
+  await Attendance.destroy({ where: {}, transaction });
   await Result.destroy({ where: {}, transaction });
   await Exam.destroy({ where: {}, transaction });
   await User.destroy({ where: {}, transaction });

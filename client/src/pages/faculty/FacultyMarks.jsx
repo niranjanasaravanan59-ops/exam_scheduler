@@ -14,6 +14,75 @@ import { formatDisplayDate, formatDisplayDateTime, isExamEnded } from '../../uti
 const EMPTY_DRAFT = { selectedExam: '', editingResult: null, formValues: {} };
 const RESULT_FETCH_LIMIT = 1000;
 const EDITABLE_RESULT_STATUS = 'draft';
+const ABSENT_ATTENDANCE = 'absent';
+
+function AttendanceBadge({ status }) {
+  const config = {
+    present: { label: 'Present', cls: 'bg-green-100 text-green-700' },
+    absent: { label: 'Absent', cls: 'bg-red-100 text-red-700' },
+    unmarked: { label: 'Unmarked', cls: 'bg-gray-100 text-gray-600' },
+  };
+  const cfg = config[status] || config.unmarked;
+
+  return (
+    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${cfg.cls}`}>
+      {cfg.label}
+    </span>
+  );
+}
+
+function AttendanceButton({ active, disabled, tone, children, onClick, title }) {
+  const styles = {
+    present: active ? 'border-green-600 bg-green-600 text-white' : 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100',
+    absent: active ? 'border-red-600 bg-red-600 text-white' : 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100',
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className={`inline-flex min-w-[4rem] justify-center rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${styles[tone]}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+const loadAttendanceStudents = async (examId) => {
+  const { data } = await api.get(`/attendance/exams/${examId}`);
+  const students = data.students || [];
+
+  const extractNumber = (s) => {
+    if (!s) return NaN;
+    const m = String(s).match(/(\d+)\s*$/); // trailing number
+    if (m) return parseInt(m[1], 10);
+    const m2 = String(s).match(/(\d+)/); // first number
+    return m2 ? parseInt(m2[1], 10) : NaN;
+  };
+
+  const studentCompare = (x, y) => {
+    // try rollNo numeric comparison
+    if (x.rollNo && y.rollNo) {
+      const xn = extractNumber(x.rollNo);
+      const yn = extractNumber(y.rollNo);
+      if (!Number.isNaN(xn) && !Number.isNaN(yn)) return xn - yn;
+      return x.rollNo.localeCompare(y.rollNo, undefined, { numeric: true, sensitivity: 'base' });
+    }
+
+    // fallback to numeric suffix in name (e.g., 'CSE Student 10')
+    const xn = extractNumber(x.name);
+    const yn = extractNumber(y.name);
+    if (!Number.isNaN(xn) && !Number.isNaN(yn)) return xn - yn;
+
+    // final fallback: name locale compare
+    return x.name.localeCompare(y.name, undefined, { sensitivity: 'base' });
+  };
+
+  students.sort(studentCompare);
+  return students;
+};
 
 export default function FacultyMarks() {
   const dispatch = useDispatch();
@@ -26,6 +95,7 @@ export default function FacultyMarks() {
   const [editingResult, setEditingResult] = useState(null);
   const [myEditData, setMyEditData] = useState(null);
   const [draftRestored, setDraftRestored] = useState(false);
+  const [attendanceSavingId, setAttendanceSavingId] = useState(null);
 
   const [draft, setDraft, clearDraft, hasDraft] = useDraftRecovery(
     `draft:marks:${user?.id || 'anonymous'}`,
@@ -61,16 +131,19 @@ export default function FacultyMarks() {
       return;
     }
 
+    let active = true;
     dispatch(fetchResults({ examId: selectedExam, limit: RESULT_FETCH_LIMIT }));
 
-    const currentExam = exams.find((e) => e.id === selectedExam);
-    const params = { role: 'student' };
-    if (currentExam?.department) params.department = currentExam.department;
-
-    api.get('/auth/users', { params })
-      .then((r) => setStudents(r.data.users || []))
+    loadAttendanceStudents(selectedExam)
+      .then((loadedStudents) => {
+        if (active) setStudents(loadedStudents);
+      })
       .catch(() => toast.error('Failed to load students'));
-  }, [selectedExam, dispatch, exams]);
+
+    return () => {
+      active = false;
+    };
+  }, [selectedExam, dispatch]);
 
   useEffect(() => {
     const subscription = watch((values) => {
@@ -90,6 +163,16 @@ export default function FacultyMarks() {
   };
 
   const examLocked = currentExam && !isExamCompleted(currentExam);
+  const isStudentAbsent = (student) => student.attendanceStatus === ABSENT_ATTENDANCE;
+
+  const refreshSelectedExam = async () => {
+    if (!selectedExam) return;
+    const [, loadedStudents] = await Promise.all([
+      dispatch(fetchResults({ examId: selectedExam, limit: RESULT_FETCH_LIMIT })),
+      loadAttendanceStudents(selectedExam),
+    ]);
+    setStudents(loadedStudents);
+  };
 
   const handleExamChange = (examId) => {
     setSelectedExam(examId);
@@ -100,6 +183,11 @@ export default function FacultyMarks() {
   };
 
   const openCreateResult = (student) => {
+    if (isStudentAbsent(student)) {
+      toast.error('Absent students cannot have marks or grades.');
+      return;
+    }
+
     const entry = { mode: 'create', studentId: student.id, studentName: student.name };
     const values = { studentId: student.id, examId: selectedExam, marks: '', remarks: '' };
     setEditingResult(entry);
@@ -107,13 +195,18 @@ export default function FacultyMarks() {
     setDraft({ selectedExam, editingResult: entry, formValues: values });
   };
 
-  const openEditResult = (result) => {
+  const openEditResult = (result, student) => {
+    if (isStudentAbsent(student)) {
+      toast.error('Absent students cannot have marks or grades.');
+      return;
+    }
+
     if (result.status !== EDITABLE_RESULT_STATUS) {
       toast.error('Marks can be edited only before the result is ready.');
       return;
     }
 
-    const entry = { mode: 'edit', resultId: result.id, studentName: result.student?.name };
+    const entry = { mode: 'edit', resultId: result.id, studentId: result.studentId, studentName: result.student?.name };
     const values = { marks: result.marks, remarks: result.remarks || '', version: result.version };
     setEditingResult(entry);
     reset(values);
@@ -144,8 +237,9 @@ export default function FacultyMarks() {
       toast.success(editingResult.mode === 'create' ? 'Marks saved' : 'Marks updated');
       setEditingResult(null);
       clearDraft();
+      await refreshSelectedExam();
     } else if (result.payload?.code === 'RESULT_EXISTS') {
-      await dispatch(fetchResults({ examId: selectedExam, limit: RESULT_FETCH_LIMIT }));
+      await refreshSelectedExam();
       toast.error('Result already exists. Reloaded existing marks.');
       setEditingResult(null);
       clearDraft();
@@ -156,7 +250,7 @@ export default function FacultyMarks() {
 
   const handleReload = async () => {
     dispatch(clearResultErrors());
-    await dispatch(fetchResults({ examId: selectedExam, limit: RESULT_FETCH_LIMIT }));
+    await refreshSelectedExam();
     setEditingResult(null);
   };
 
@@ -167,19 +261,57 @@ export default function FacultyMarks() {
     dispatch(clearResultErrors());
   };
 
-  const handleMarkReady = async (result) => {
+  const handleAttendance = async (student, status) => {
+    if (examLocked) return;
+    if (status === ABSENT_ATTENDANCE && student.result?.status === 'published') {
+      toast.error('Published results cannot be marked absent.');
+      return;
+    }
+
+    setAttendanceSavingId(student.id);
+    try {
+      const response = await api.patch(`/attendance/exams/${selectedExam}/students/${student.id}`, { status });
+      toast.success(`${student.name} marked ${status}`);
+      if (response.data?.clearedResult) {
+        toast('Existing draft or ready marks were cleared for this absent student.');
+        if (editingResult?.studentId === student.id) closeModal();
+      }
+      await refreshSelectedExam();
+    } catch (error) {
+      toast.error(error.response?.data?.error?.message || 'Unable to update attendance');
+    } finally {
+      setAttendanceSavingId(null);
+    }
+  };
+
+  const handleMarkReady = async (result, student) => {
+    if (isStudentAbsent(student)) {
+      toast.error('Absent students cannot be marked ready.');
+      return;
+    }
+
     const action = await dispatch(transitionResult({ id: result.id, action: 'ready' }));
     if (!action.error) {
       toast.success('Result marked ready');
+      await refreshSelectedExam();
     } else {
       toast.error(action.payload?.message || 'Unable to mark result ready');
     }
   };
 
   const handleMarkAllDraftsReady = async () => {
-    const draftResults = results.filter((result) => result.examId === selectedExam && result.status === 'draft');
+    const absentStudentIds = new Set(
+      students
+        .filter((student) => student.attendanceStatus === ABSENT_ATTENDANCE)
+        .map((student) => student.id)
+    );
+    const draftResults = results.filter((result) => (
+      result.examId === selectedExam &&
+      result.status === 'draft' &&
+      !absentStudentIds.has(result.studentId)
+    ));
     if (!draftResults.length) {
-      toast('No draft results available to move to ready', { icon: 'ℹ️' });
+      toast('No present draft results available to move to ready');
       return;
     }
 
@@ -195,12 +327,28 @@ export default function FacultyMarks() {
       toast.success(`Marked ${draftResults.length - failed.length} results ready`);
       toast.error(`${failed.length} result${failed.length === 1 ? '' : 's'} failed`);
     }
+
+    await refreshSelectedExam();
   };
 
   const studentsWithResults = students.map((student) => ({
     ...student,
     result: results.find((result) => result.studentId === student.id),
   }));
+  const absentStudentIds = new Set(
+    studentsWithResults
+      .filter((student) => isStudentAbsent(student))
+      .map((student) => student.id)
+  );
+  const hasReadyEligibleDraft = results.some((result) => (
+    result.examId === selectedExam &&
+    result.status === 'draft' &&
+    !absentStudentIds.has(result.studentId)
+  ));
+  const editingStudent = editingResult?.studentId
+    ? studentsWithResults.find((student) => student.id === editingResult.studentId)
+    : null;
+  const editingStudentAbsent = editingStudent ? isStudentAbsent(editingStudent) : false;
 
   return (
     <div className="space-y-5">
@@ -281,12 +429,18 @@ export default function FacultyMarks() {
               </div>
               <input type="hidden" {...register('version')} />
               <div className="flex gap-3 pt-2">
-                <button type="submit" disabled={examLocked} className="btn-primary flex-1" title={examLocked ? 'Exam not completed yet' : ''}>
+                <button
+                  type="submit"
+                  disabled={examLocked || editingStudentAbsent}
+                  className="btn-primary flex-1"
+                  title={examLocked ? 'Exam not completed yet' : editingStudentAbsent ? 'Student is marked absent' : ''}
+                >
                   Save Marks
                 </button>
                 <button type="button" onClick={closeModal} className="btn-secondary">Cancel</button>
               </div>
               {examLocked && <p className="text-xs text-amber-600 text-center">Cannot save until the exam is completed.</p>}
+              {editingStudentAbsent && <p className="text-xs text-red-600 text-center">Cannot save marks for an absent student.</p>}
             </form>
           </div>
         </div>
@@ -299,7 +453,7 @@ export default function FacultyMarks() {
             <button
               type="button"
               onClick={handleMarkAllDraftsReady}
-              disabled={examLocked || !results.some((result) => result.examId === selectedExam && result.status === 'draft')}
+              disabled={examLocked || !hasReadyEligibleDraft}
               className="btn-secondary text-xs disabled:opacity-40"
             >
               Mark all drafts ready
@@ -308,44 +462,81 @@ export default function FacultyMarks() {
           {loading ? (
             <div className="p-8 text-center text-gray-400">Loading...</div>
           ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  {['Name', 'Roll No', 'Marks', 'Grade', 'Status', 'Action'].map((heading) => (
-                    <th key={heading} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{heading}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {studentsWithResults.map((student) => (
-                  <tr key={student.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">{student.name}</td>
-                    <td className="px-4 py-3 text-gray-500">{student.rollNo}</td>
-                    <td className="px-4 py-3">
-                      {student.result ? <span className="font-medium">{student.result.marks}</span> : <span className="text-gray-300">-</span>}
-                    </td>
-                    <td className="px-4 py-3">{student.result ? <GradeBadge grade={student.result.grade} /> : '-'}</td>
-                    <td className="px-4 py-3">
-                      {student.result ? <StatusBadge status={student.result.status} /> : <span className="text-gray-400 text-xs">Not entered</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      {student.result?.status === 'published' ? (
-                        <span className="text-xs text-gray-400">Published</span>
-                      ) : student.result?.status === 'ready' ? (
-                        <span className="text-xs text-gray-400">Ready</span>
-                      ) : student.result ? (
-                        <div className="flex items-center gap-3">
-                          <button onClick={() => openEditResult(student.result)} disabled={examLocked} className="text-blue-600 hover:underline text-xs disabled:opacity-40">Edit</button>
-                          <button onClick={() => handleMarkReady(student.result)} disabled={examLocked} className="text-yellow-600 hover:underline text-xs disabled:opacity-40">Ready</button>
-                        </div>
-                      ) : (
-                        <button onClick={() => openCreateResult(student)} disabled={examLocked} className="text-green-600 hover:underline text-xs disabled:opacity-40">Enter</button>
-                      )}
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[980px] text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {['Name', 'Roll No', 'Attendance', 'Marks', 'Grade', 'Status', 'Mark Attendance', 'Action'].map((heading) => (
+                      <th key={heading} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{heading}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {studentsWithResults.map((student) => {
+                    const absent = isStudentAbsent(student);
+                    const publishedResult = student.result?.status === 'published';
+
+                    return (
+                      <tr key={student.id} className={absent ? 'bg-red-50/40 hover:bg-red-50' : 'hover:bg-gray-50'}>
+                        <td className="px-4 py-3">{student.name}</td>
+                        <td className="px-4 py-3 text-gray-500">{student.rollNo}</td>
+                        <td className="px-4 py-3"><AttendanceBadge status={student.attendanceStatus} /></td>
+                        <td className="px-4 py-3">
+                          {!absent && student.result ? <span className="font-medium">{student.result.marks}</span> : <span className="text-gray-300">-</span>}
+                        </td>
+                        <td className="px-4 py-3">{!absent && student.result ? <GradeBadge grade={student.result.grade} /> : '-'}</td>
+                        <td className="px-4 py-3">
+                          {absent ? (
+                            <span className="text-xs font-medium text-red-600">Blocked</span>
+                          ) : student.result ? (
+                            <StatusBadge status={student.result.status} />
+                          ) : (
+                            <span className="text-gray-400 text-xs">Not entered</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-2">
+                            <AttendanceButton
+                              tone="present"
+                              active={student.attendanceStatus === 'present'}
+                              disabled={examLocked || attendanceSavingId === student.id}
+                              onClick={() => handleAttendance(student, 'present')}
+                            >
+                              Present
+                            </AttendanceButton>
+                            <AttendanceButton
+                              tone="absent"
+                              active={absent}
+                              disabled={examLocked || attendanceSavingId === student.id || publishedResult}
+                              title={publishedResult ? 'Published results cannot be marked absent' : ''}
+                              onClick={() => handleAttendance(student, ABSENT_ATTENDANCE)}
+                            >
+                              Absent
+                            </AttendanceButton>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {absent ? (
+                            <span className="text-xs text-red-500">Absent</span>
+                          ) : student.result?.status === 'published' ? (
+                            <span className="text-xs text-gray-400">Published</span>
+                          ) : student.result?.status === 'ready' ? (
+                            <span className="text-xs text-gray-400">Ready</span>
+                          ) : student.result ? (
+                            <div className="flex items-center gap-3">
+                              <button onClick={() => openEditResult(student.result, student)} disabled={examLocked} className="text-blue-600 hover:underline text-xs disabled:opacity-40">Edit</button>
+                              <button onClick={() => handleMarkReady(student.result, student)} disabled={examLocked} className="text-yellow-600 hover:underline text-xs disabled:opacity-40">Ready</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => openCreateResult(student)} disabled={examLocked} className="text-green-600 hover:underline text-xs disabled:opacity-40">Enter</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

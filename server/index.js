@@ -36,6 +36,7 @@ const resultRoutes = require('./modules/result/resultRoutes');
 const dashboardRoutes = require('./modules/dashboard/dashboardRoutes');
 const importRoutes = require('./modules/bulkImport/importRoutes');
 const metricsRoutes = require('./modules/metrics/metricsRoutes');
+const attendanceRoutes = require('./modules/attendance/attendanceRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -105,6 +106,7 @@ app.use('/api/exams', examRoutes);
 app.use('/api/results', resultRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/import', importRoutes);
+app.use('/api/attendance', attendanceRoutes);
 app.use('/metrics', metricsRoutes);
 
 // ─── Error Handling ───────────────────────────────────────────────────────────

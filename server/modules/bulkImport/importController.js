@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { Result, computeGrade } = require('../result/resultModel');
 const { Exam } = require('../exam/examModel');
 const { User } = require('../auth/authModel');
+const { Attendance, ATTENDANCE_STATUSES } = require('../attendance/attendanceModel');
 const { sequelize } = require('../../config/db');
 const logger = require('../../config/logger');
 const { isExamCompletedAt } = require('../../utils/examTiming');
@@ -124,6 +125,20 @@ const processBatch = async (rows, batchId, actorId, report, offset) => {
           row: rowNum,
           field: 'roll_no',
           message: `Student ${roll_no} is not in ${exam.department}`,
+        });
+        continue;
+      }
+
+      const attendance = await Attendance.findOne({
+        where: { examId: exam_id, studentId: student.id },
+        attributes: ['status'],
+        transaction: t,
+      });
+      if (attendance?.status === ATTENDANCE_STATUSES.ABSENT) {
+        report.errors.push({
+          row: rowNum,
+          field: 'roll_no',
+          message: `Student ${roll_no} is marked absent for this exam`,
         });
         continue;
       }
