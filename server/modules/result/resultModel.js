@@ -88,13 +88,11 @@ const Result = sequelize.define(
       { fields: ['importBatch'] },
     ],
     hooks: {
-      beforeCreate: (result) => {
-        // Always compute grade server-side
-        result.grade = computeGrade(parseFloat(result.marks));
-      },
-      beforeUpdate: (result) => {
-        if (result.changed('marks')) {
-          result.grade = computeGrade(parseFloat(result.marks));
+      beforeValidate: (result) => {
+        const marks = parseFloat(result.marks);
+        if (Number.isFinite(marks) && (result.isNewRecord || result.changed('marks'))) {
+          // Always compute grade server-side before allowNull validation runs.
+          result.grade = computeGrade(marks);
         }
       },
     },

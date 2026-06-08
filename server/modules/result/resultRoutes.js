@@ -2,7 +2,13 @@ const express = require('express');
 const { body } = require('express-validator');
 const router = express.Router();
 const {
-  createResult, getResults, updateResult, transitionResult, bulkPublishByExam,
+  createResult,
+  getResults,
+  getResultExamOverview,
+  getResultExamDetail,
+  updateResult,
+  transitionResult,
+  bulkPublishByExam,
 } = require('./resultController');
 const { verifyToken, requireRole } = require('../../middleware/authMiddleware');
 
@@ -26,6 +32,8 @@ const transitionValidation = [
   body('action').isIn(['draft', 'ready', 'published']).withMessage('Invalid workflow action'),
 ];
 
+router.get('/exams', verifyToken, requireRole('admin'), getResultExamOverview);
+router.get('/exams/:examId', verifyToken, requireRole('admin'), getResultExamDetail);
 router.get('/', verifyToken, getResults);
 router.post('/', verifyToken, requireRole('admin', 'faculty'), createValidation, createResult);
 router.put('/:id', verifyToken, requireRole('admin', 'faculty'), updateValidation, updateResult);

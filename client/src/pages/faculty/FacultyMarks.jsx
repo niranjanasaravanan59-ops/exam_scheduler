@@ -176,6 +176,27 @@ export default function FacultyMarks() {
     }
   };
 
+  const handleMarkAllDraftsReady = async () => {
+    const draftResults = results.filter((result) => result.examId === selectedExam && result.status === 'draft');
+    if (!draftResults.length) {
+      toast('No draft results available to move to ready', { icon: 'ℹ️' });
+      return;
+    }
+
+    const promises = draftResults.map((result) => dispatch(transitionResult({ id: result.id, action: 'ready' })));
+    const settled = await Promise.all(promises);
+    const failed = settled.filter((r) => r.error);
+
+    if (!failed.length) {
+      toast.success(`Marked ${draftResults.length} draft result${draftResults.length === 1 ? '' : 's'} ready`);
+    } else if (failed.length === draftResults.length) {
+      toast.error('Unable to mark any draft results ready');
+    } else {
+      toast.success(`Marked ${draftResults.length - failed.length} results ready`);
+      toast.error(`${failed.length} result${failed.length === 1 ? '' : 's'} failed`);
+    }
+  };
+
   const studentsWithResults = students.map((student) => ({
     ...student,
     result: results.find((result) => result.studentId === student.id),
@@ -273,8 +294,16 @@ export default function FacultyMarks() {
 
       {selectedExam && (
         <div className="card p-0 overflow-hidden">
-          <div className="px-4 py-3 bg-gray-50 border-b font-medium text-gray-700 text-sm">
-            Students - {studentsWithResults.length} total
+          <div className="flex flex-col gap-2 px-4 py-3 bg-gray-50 border-b sm:flex-row sm:items-center sm:justify-between">
+            <span className="font-medium text-gray-700 text-sm">Students - {studentsWithResults.length} total</span>
+            <button
+              type="button"
+              onClick={handleMarkAllDraftsReady}
+              disabled={examLocked || !results.some((result) => result.examId === selectedExam && result.status === 'draft')}
+              className="btn-secondary text-xs disabled:opacity-40"
+            >
+              Mark all drafts ready
+            </button>
           </div>
           {loading ? (
             <div className="p-8 text-center text-gray-400">Loading...</div>

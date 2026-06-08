@@ -193,7 +193,7 @@ const parseCSV = (filePath) => {
 const getImportTemplate = (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="results_import_template.csv"');
-  res.send('exam_id,roll_no,marks\n11111111-1111-4111-8111-111111111111,CS2021001,85\n11111111-1111-4111-8111-111111111111,CS2021002,72');
+  res.send('exam_id,roll_no,marks\n11111111-1111-4111-8111-111111111111,CSE2026001,85\n11111111-1111-4111-8111-111111111111,CSE2026002,72');
 };
 
 module.exports = { importResults, getImportTemplate };

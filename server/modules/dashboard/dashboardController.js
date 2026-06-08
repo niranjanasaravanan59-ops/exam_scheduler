@@ -19,6 +19,7 @@ const getAdminDashboard = async (req, res, next) => {
       passedResults,
       totalStudents,
       totalFaculty,
+      totalExams,
     ] = await Promise.all([
       Exam.count({ where: buildNotCompletedExamWhere(Op, {}, now) }),
       Exam.count({ where: buildCompletedExamWhere(Op, {}, now) }),
@@ -27,27 +28,15 @@ const getAdminDashboard = async (req, res, next) => {
       Result.count({ where: { status: 'published', grade: { [Op.notIn]: ['F'] } } }),
       User.count({ where: { role: 'student', isActive: true } }),
       User.count({ where: { role: 'faculty', isActive: true } }),
+      Exam.count({ where: { isDeleted: false } }),
     ]);
 
     const overallPassPercentage =
       finishedPublications > 0 ? parseFloat(((passedResults / finishedPublications) * 100).toFixed(2)) : 0;
 
-    const gradeRows = await Result.findAll({
-      where: { status: 'published' },
-      attributes: ['grade', [fn('COUNT', col('grade')), 'count']],
-      group: ['grade'],
-      raw: true,
-    });
-    const gradeDistribution = gradeRows.reduce((acc, row) => {
-      acc[row.grade] = parseInt(row.count, 10);
-      return acc;
-    }, {});
-
-    // Recent activity
-    const recentExams = await Exam.findAll({
+    const exams = await Exam.findAll({
       where: { isDeleted: false },
-      order: [['createdAt', 'DESC']],
-      limit: 5,
+      order: [['examDate', 'ASC'], ['startTime', 'ASC']],
       attributes: ['id', 'subject', 'department', 'semester', 'examDate', 'startTime', 'endTime', 'hall'],
     });
 
@@ -60,11 +49,11 @@ const getAdminDashboard = async (req, res, next) => {
           resultsPendingPublication,
           finishedPublications,
           overallPassPercentage,
+          totalExams,
           totalStudents,
           totalFaculty,
-          gradeDistribution,
         },
-        recentExams,
+        exams,
       },
     });
   } catch (error) {

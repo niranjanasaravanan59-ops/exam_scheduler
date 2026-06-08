@@ -94,18 +94,19 @@ After `npm run seed:run`:
 
 | Role | Email | Password |
 | --- | --- | --- |
-| Admin | `admin@college.edu` | `Admin@1234` |
-| Faculty | `ramesh@college.edu` | `Faculty@1234` |
-| Student 1 | `student1@college.edu` | `Std@1` |
-| Student 2-50 | `student{number}@college.edu` | `Std@{number}` |
+| Admin 1 | `admin1@college.edu` | `admin1@123` |
+| Admin 2 | `admin2@college.edu` | `admin2@123` |
+| Faculty | `{cse|ece|it}faculty{1|2}@college.edu` | `faculty{1|2}@123` |
+| Student | `{cse|ece|it}student{1-50}@college.edu` | `student{1-50}@123` |
 
-The seed creates 50 hardcoded manual-test students (`Student 1` to `Student 50`) and resets their passwords each time `npm run seed:run` is executed. The full list is in `server/scripts/manual_test_credentials.csv`.
+The seed deletes existing `results`, `exams`, and `users` rows, then creates 2 admins, 2 faculty per department, and 50 students each for `CSE`, `ECE`, and `IT`. The full credential list is in `server/scripts/manual_test_credentials.csv`.
 
 For time-condition checks, the seed includes:
 
-- Completed import exam: `11111111-1111-4111-8111-111111111111`, assigned to `ramesh@college.edu`, accepts marks/imports.
-- Future locked exam: `22222222-2222-4222-8222-222222222222`, assigned to `ramesh@college.edu`, should reject marks because the exam has not ended.
-- Published demo exam: `33333333-3333-4333-8333-333333333333`, has 50 seeded results across `published`, `ready`, and `draft`.
+- 3 exams per department: one completed exam with mixed result workflow data, one completed import-ready exam with no results, and one future locked exam.
+- CSE import-ready exam: `11111111-1111-4111-8111-111111111111`, assigned to `csefaculty2@college.edu`, accepts marks/imports.
+- CSE future locked exam: `22222222-2222-4222-8222-222222222222`, assigned to `csefaculty2@college.edu`, should reject marks because the exam has not ended.
+- CSE results exam: `33333333-3333-4333-8333-333333333333`, has 50 seeded results across `published`, `ready`, and `draft`.
 
 The CSV at `server/scripts/sample_results.csv` is ready for the seeded faculty import flow.
 

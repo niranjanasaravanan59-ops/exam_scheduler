@@ -39,7 +39,7 @@ export default function Layout({ children }) {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      <aside className={`${sidebarOpen ? 'w-64' : 'w-16'} bg-gray-900 text-white flex flex-col transition-all duration-200`}>
+      <aside className={`${sidebarOpen ? 'w-64' : 'w-16'} flex shrink-0 flex-col bg-gray-900 text-white transition-all duration-200`}>
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
           {sidebarOpen && <span className="font-bold text-lg truncate">ExamScheduler</span>}
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-1 rounded hover:bg-gray-700">
@@ -49,7 +49,7 @@ export default function Layout({ children }) {
 
         <nav className="flex-1 p-2 space-y-1 overflow-y-auto">
           {nav.map((item) => {
-            const active = location.pathname === item.to;
+            const active = location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
             return (
               <Link
                 key={item.to}
@@ -81,8 +81,8 @@ export default function Layout({ children }) {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="p-6">{children}</div>
+      <main className="min-w-0 flex-1 overflow-y-auto">
+        <div className="px-4 py-5 sm:px-6 lg:px-8">{children}</div>
       </main>
     </div>
   );

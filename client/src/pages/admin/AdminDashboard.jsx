@@ -1,12 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import toast from 'react-hot-toast';
 import KPICard from '../../components/shared/KPICard';
 import api from '../../utils/api';
 import { formatDisplayDate, formatDisplayTime, isExamEnded } from '../../utils/dateTime';
-
-const GRADE_COLORS = { O: '#7c3aed', 'A+': '#2563eb', A: '#0891b2', B: '#16a34a', C: '#ca8a04', F: '#dc2626' };
 
 export default function AdminDashboard() {
   const [data, setData] = useState(null);
@@ -22,9 +19,12 @@ export default function AdminDashboard() {
   if (loading) return <div className="flex h-64 items-center justify-center text-gray-400">Loading dashboard...</div>;
   if (!data) return null;
 
-  const { kpis, recentExams } = data;
-  const gradeData = Object.entries(kpis.gradeDistribution || {}).map(([grade, count]) => ({ grade, count }));
+  const { kpis } = data;
+  const exams = data.exams || [];
   const publicationRecordCount = Number(kpis.resultsPendingPublication || 0) + Number(kpis.finishedPublications || 0);
+  const examCount = exams.length;
+  const countedExamTotal = Number(kpis.upcomingExams || 0) + Number(kpis.examsCompleted || 0);
+  const totalExamCount = Number(kpis.totalExams ?? (countedExamTotal || examCount));
   const cards = [
     { label: 'Upcoming Exams', value: kpis.upcomingExams, icon: '\u{1F4C5}', color: 'blue' },
     { label: 'Exams Completed', value: kpis.examsCompleted, icon: '\u2705', color: 'green' },
@@ -65,18 +65,18 @@ export default function AdminDashboard() {
         })}
       </div>
 
-      <div className={`grid grid-cols-1 gap-6 ${gradeData.length > 0 ? 'xl:grid-cols-5' : ''}`}>
-        <div className={`card ${gradeData.length > 0 ? 'xl:col-span-3' : ''}`}>
+      <div className="grid grid-cols-1 gap-6">
+        <div className="card">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="font-semibold text-gray-800">Recent Exams</h2>
+            <h2 className="font-semibold text-gray-800">All Exams</h2>
             <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
-              {recentExams?.length || 0} total
+              {totalExamCount} total
             </span>
           </div>
 
-          {recentExams?.length ? (
+          {exams.length ? (
             <div className="overflow-hidden rounded-lg border border-gray-100">
-              {recentExams.map((exam) => {
+              {exams.map((exam) => {
                 const completed = isExamEnded(exam.examDate, exam.endTime);
                 return (
                   <div
@@ -104,24 +104,6 @@ export default function AdminDashboard() {
             <div className="rounded-lg border border-dashed border-gray-200 p-8 text-center text-sm text-gray-400">No exams yet</div>
           )}
         </div>
-
-        {gradeData.length > 0 && (
-          <div className="card xl:col-span-2">
-            <h2 className="mb-4 font-semibold text-gray-800">Grade Distribution</h2>
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={gradeData}>
-                <XAxis dataKey="grade" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                  {gradeData.map((entry) => (
-                    <Cell key={entry.grade} fill={GRADE_COLORS[entry.grade] || '#6b7280'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
       </div>
     </div>
   );

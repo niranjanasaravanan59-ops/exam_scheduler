@@ -1,115 +1,118 @@
 import React, { useEffect, useState } from 'react';
-import { useDispatch, useSelector } from 'react-redux';
+import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { fetchResults, transitionResult, bulkPublish } from '../../features/results/resultSlice';
-import { StatusBadge, GradeBadge } from '../../components/shared/Badges';
-import { formatDisplayDate } from '../../utils/dateTime';
+import api from '../../utils/api';
+import { formatDisplayDate, formatDisplayTime } from '../../utils/dateTime';
+
+const formatNumber = (value) => new Intl.NumberFormat().format(Number(value || 0));
+
+function CountCell({ value, tone = 'gray' }) {
+  const tones = {
+    gray: 'bg-gray-100 text-gray-700',
+    yellow: 'bg-yellow-100 text-yellow-800',
+    purple: 'bg-purple-100 text-purple-800',
+    green: 'bg-green-100 text-green-800',
+  };
+
+  return (
+    <span className={`inline-flex min-w-12 justify-center rounded-full px-2.5 py-1 text-xs font-semibold tabular-nums ${tones[tone] || tones.gray}`}>
+      {formatNumber(value)}
+    </span>
+  );
+}
 
 export default function AdminResults() {
-  const dispatch = useDispatch();
-  const { items: results, loading } = useSelector((s) => s.results);
-  const [filters, setFilters] = useState({ status: '' });
+  const [overview, setOverview] = useState({ departments: [], exams: [] });
+  const [department, setDepartment] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    dispatch(fetchResults(filters));
-  }, [dispatch, filters]);
+    setLoading(true);
+    api.get('/results/exams', { params: department ? { department } : {} })
+      .then((r) => setOverview(r.data))
+      .catch(() => toast.error('Failed to load result management'))
+      .finally(() => setLoading(false));
+  }, [department]);
 
-  const handleTransition = async (id, action) => {
-    const r = await dispatch(transitionResult({ id, action }));
-    if (!r.error) toast.success(`Result moved to ${action}`);
-    else toast.error(r.payload?.message || 'Transition failed');
-  };
-
-  const handleBulkPublish = async (examId) => {
-    if (!confirm('Publish all ready results for this exam?')) return;
-    const r = await dispatch(bulkPublish(examId));
-    if (!r.error) toast.success(`${r.payload.count} results published`);
-    else toast.error(r.payload?.message || 'Failed');
-  };
-
-  // Group by exam for bulk publish button
-  const examGroups = results.reduce((acc, r) => {
-    const key = r.examId;
-    if (!acc[key]) acc[key] = { exam: r.exam, results: [] };
-    acc[key].results.push(r);
-    return acc;
-  }, {});
+  const exams = overview.exams || [];
+  const departments = overview.departments || [];
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-gray-900">Results Management</h1>
+        <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+          {formatNumber(exams.length)} exams
+        </span>
       </div>
 
-      {/* Filters */}
-      <div className="card flex gap-3 flex-wrap p-4">
-        <select className="input w-40" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-          <option value="">All Statuses</option>
-          <option value="draft">Draft</option>
-          <option value="ready">Ready</option>
-          <option value="published">Published</option>
+      <div className="card flex flex-wrap items-center gap-3 p-4">
+        <label className="text-sm font-medium text-gray-700" htmlFor="department-filter">Department</label>
+        <select
+          id="department-filter"
+          className="input min-w-56"
+          value={department}
+          onChange={(e) => setDepartment(e.target.value)}
+        >
+          <option value="">All Departments</option>
+          {departments.map((dept) => (
+            <option key={dept} value={dept}>{dept}</option>
+          ))}
         </select>
-        <input className="input w-40" placeholder="Department..." onChange={(e) => setFilters((f) => ({ ...f, department: e.target.value }))} />
-        <input className="input w-40" placeholder="Student name..." onChange={(e) => setFilters((f) => ({ ...f, studentName: e.target.value }))} />
       </div>
 
-      {/* Exam Groups with Bulk Publish */}
-      {Object.values(examGroups).map(({ exam, results: gr }) => {
-        const hasReady = gr.some((r) => r.status === 'ready');
-        return (
-          <div key={exam?.id} className="card p-0 overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b">
-              <div>
-                <span className="font-semibold text-gray-900">{exam?.subject}</span>
-                <span className="text-xs text-gray-500 ml-2" title={exam?.examDate}>{exam?.department} · Sem {exam?.semester} · {formatDisplayDate(exam?.examDate)}</span>
-              </div>
-              {hasReady && (
-                <button onClick={() => handleBulkPublish(exam?.id)} className="btn-success text-xs py-1.5 px-3">
-                  📢 Publish All Ready
-                </button>
-              )}
-            </div>
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  {['Student', 'Roll No', 'Marks', 'Grade', 'Status', 'Actions'].map((h) => (
-                    <th key={h} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">{h}</th>
-                  ))}
+      <div className="card overflow-hidden p-0">
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50">
+              <tr className="border-b border-gray-100 text-left text-xs font-semibold uppercase text-gray-500">
+                <th className="px-5 py-3">Exam Name</th>
+                <th className="px-4 py-3">Department</th>
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3 text-center">Attended</th>
+                <th className="px-4 py-3 text-center">Not Ready</th>
+                <th className="px-4 py-3 text-center">Ready</th>
+                <th className="px-4 py-3 text-center">Published</th>
+                <th className="px-4 py-3 text-right">Details</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {exams.map((exam) => (
+                <tr key={exam.id} className="hover:bg-blue-50/40">
+                  <td className="px-5 py-4">
+                    <p className="font-medium text-gray-900">{exam.subject}</p>
+                    <p className="mt-1 text-xs text-gray-500">Sem {exam.semester} - Hall {exam.hall}</p>
+                  </td>
+                  <td className="px-4 py-4 text-gray-700">{exam.department}</td>
+                  <td className="px-4 py-4 text-gray-600">
+                    <p title={exam.examDate}>{formatDisplayDate(exam.examDate)}</p>
+                    <p className="text-xs text-gray-500">
+                      {formatDisplayTime(exam.startTime)} - {formatDisplayTime(exam.endTime)}
+                    </p>
+                  </td>
+                  <td className="px-4 py-4 text-center"><CountCell value={exam.attendedCount} /></td>
+                  <td className="px-4 py-4 text-center"><CountCell value={exam.notReadyCount} tone="yellow" /></td>
+                  <td className="px-4 py-4 text-center"><CountCell value={exam.readyCount} tone="purple" /></td>
+                  <td className="px-4 py-4 text-center"><CountCell value={exam.publishedCount} tone="green" /></td>
+                  <td className="px-4 py-4 text-right">
+                    <Link to={`/admin/results/${exam.id}`} className="btn-secondary inline-flex px-3 py-1.5 text-xs">
+                      Details
+                    </Link>
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {gr.map((result) => (
-                  <tr key={result.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">{result.student?.name}</td>
-                    <td className="px-4 py-3 text-gray-500">{result.student?.rollNo}</td>
-                    <td className="px-4 py-3 font-medium">{result.marks}</td>
-                    <td className="px-4 py-3"><GradeBadge grade={result.grade} /></td>
-                    <td className="px-4 py-3"><StatusBadge status={result.status} /></td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-2 flex-wrap">
-                        {result.status === 'draft' && (
-                          <button onClick={() => handleTransition(result.id, 'ready')} className="text-xs text-yellow-600 hover:underline">→ Ready</button>
-                        )}
-                        {result.status === 'ready' && (
-                          <>
-                            <button onClick={() => handleTransition(result.id, 'published')} className="text-xs text-green-600 hover:underline">→ Publish</button>
-                            <button onClick={() => handleTransition(result.id, 'draft')} className="text-xs text-gray-500 hover:underline">← Draft</button>
-                          </>
-                        )}
-                        {result.status === 'published' && <span className="text-xs text-gray-400">Published</span>}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
-      })}
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-      {!loading && results.length === 0 && (
-        <div className="card text-center py-12 text-gray-400">No results found.</div>
-      )}
+        {!loading && exams.length === 0 && (
+          <div className="py-12 text-center text-sm text-gray-400">No exams found.</div>
+        )}
+
+        {loading && (
+          <div className="py-12 text-center text-sm text-gray-400">Loading result management...</div>
+        )}
+      </div>
     </div>
   );
 }

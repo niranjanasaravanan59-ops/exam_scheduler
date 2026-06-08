@@ -1,4 +1,4 @@
-const { Op } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 const { validationResult } = require('express-validator');
 const { Result, WORKFLOW_STATES } = require('./resultModel');
 const { Exam } = require('../exam/examModel');
@@ -6,6 +6,46 @@ const { User } = require('../auth/authModel');
 const { sequelize } = require('../../config/db');
 const logger = require('../../config/logger');
 const { isExamCompletedAt } = require('../../utils/examTiming');
+
+const toExamResultSummary = (exam, studentCountsByDepartment = {}) => {
+  const plain = exam.toJSON();
+  const results = plain.results || [];
+  const readyCount = results.filter((result) => result.status === WORKFLOW_STATES.READY).length;
+  const publishedCount = results.filter((result) => result.status === WORKFLOW_STATES.PUBLISHED).length;
+  const attendedCount = Math.max(
+    results.length,
+    Number(studentCountsByDepartment[plain.department] || 0)
+  );
+  const notReadyCount = Math.max(0, attendedCount - readyCount - publishedCount);
+
+  return {
+    id: plain.id,
+    subject: plain.subject,
+    department: plain.department,
+    semester: plain.semester,
+    examDate: plain.examDate,
+    startTime: plain.startTime,
+    endTime: plain.endTime,
+    hall: plain.hall,
+    attendedCount,
+    notReadyCount,
+    readyCount,
+    publishedCount,
+  };
+};
+
+const getResultExamSummary = (results, attendedCount) => {
+  const readyCount = results.filter((result) => result.status === WORKFLOW_STATES.READY).length;
+  const publishedCount = results.filter((result) => result.status === WORKFLOW_STATES.PUBLISHED).length;
+  const notReadyCount = Math.max(0, attendedCount - readyCount - publishedCount);
+
+  return {
+    attendedCount,
+    notReadyCount,
+    readyCount,
+    publishedCount,
+  };
+};
 
 // ─── Create Result ─────────────────────────────────────────────────────────────
 const createResult = async (req, res, next) => {
@@ -143,6 +183,141 @@ const getResults = async (req, res, next) => {
         limit: parseInt(limit),
         pages: Math.ceil(count / parseInt(limit)),
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getResultExamOverview = async (req, res, next) => {
+  try {
+    const { department } = req.query;
+    const examWhere = { isDeleted: false };
+
+    if (department) examWhere.department = department;
+
+    const [departmentRows, studentCountRows, exams] = await Promise.all([
+      Exam.findAll({
+        where: { isDeleted: false },
+        attributes: ['department'],
+        group: ['department'],
+        order: [['department', 'ASC']],
+        raw: true,
+      }),
+      User.findAll({
+        where: { role: 'student', isActive: true },
+        attributes: ['department', [fn('COUNT', col('id')), 'count']],
+        group: ['department'],
+        raw: true,
+      }),
+      Exam.findAll({
+        where: examWhere,
+        attributes: ['id', 'subject', 'department', 'semester', 'examDate', 'startTime', 'endTime', 'hall'],
+        include: [
+          {
+            model: Result,
+            as: 'results',
+            attributes: ['id', 'status'],
+            required: false,
+          },
+        ],
+        order: [['department', 'ASC'], ['examDate', 'DESC'], ['startTime', 'ASC']],
+      }),
+    ]);
+
+    const studentCountsByDepartment = studentCountRows.reduce((acc, row) => {
+      acc[row.department] = parseInt(row.count, 10);
+      return acc;
+    }, {});
+
+    res.json({
+      departments: departmentRows.map((row) => row.department).filter(Boolean),
+      exams: exams.map((exam) => toExamResultSummary(exam, studentCountsByDepartment)),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getResultExamDetail = async (req, res, next) => {
+  try {
+    const { examId } = req.params;
+    const { status, studentName } = req.query;
+
+    const exam = await Exam.findOne({
+      where: { id: examId, isDeleted: false },
+      attributes: ['id', 'subject', 'department', 'semester', 'examDate', 'startTime', 'endTime', 'hall'],
+    });
+
+    if (!exam) {
+      return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Exam not found' } });
+    }
+
+    const studentWhere = { role: 'student' };
+
+    if (exam.department) studentWhere.department = exam.department;
+    studentWhere.isActive = true;
+    if (studentName) studentWhere.name = { [Op.like]: `%${studentName}%` };
+
+    const [allStudents, students, allResults] = await Promise.all([
+      User.findAll({
+        where: {
+          role: 'student',
+          isActive: true,
+          ...(exam.department ? { department: exam.department } : {}),
+        },
+        attributes: ['id'],
+        raw: true,
+      }),
+      User.findAll({
+        where: studentWhere,
+        attributes: ['id', 'name', 'email', 'rollNo'],
+        order: [['name', 'ASC']],
+      }),
+      Result.findAll({
+        where: { examId },
+        attributes: ['id', 'studentId', 'examId', 'marks', 'grade', 'status', 'version', 'remarks'],
+        raw: true,
+      }),
+    ]);
+
+    const resultsByStudentId = allResults.reduce((acc, result) => {
+      acc[result.studentId] = result;
+      return acc;
+    }, {});
+
+    const results = students
+      .map((student) => {
+        const plainStudent = student.toJSON();
+        const result = resultsByStudentId[plainStudent.id];
+
+        return {
+          id: result?.id || `pending-${plainStudent.id}`,
+          studentId: plainStudent.id,
+          examId,
+          marks: result?.marks ?? null,
+          grade: result?.grade ?? null,
+          status: result?.status || 'not_entered',
+          version: result?.version ?? null,
+          remarks: result?.remarks ?? null,
+          student: plainStudent,
+          hasResult: Boolean(result),
+        };
+      })
+      .filter((row) => {
+        if (!status) return true;
+        if (status === WORKFLOW_STATES.DRAFT) {
+          return row.status === WORKFLOW_STATES.DRAFT || row.status === 'not_entered';
+        }
+        return row.status === status;
+      });
+
+    res.json({
+      exam: {
+        ...exam.toJSON(),
+        ...getResultExamSummary(allResults, allStudents.length),
+      },
+      results,
     });
   } catch (error) {
     next(error);
@@ -372,4 +547,12 @@ const bulkPublishByExam = async (req, res, next) => {
   }
 };
 
-module.exports = { createResult, getResults, updateResult, transitionResult, bulkPublishByExam };
+module.exports = {
+  createResult,
+  getResults,
+  getResultExamOverview,
+  getResultExamDetail,
+  updateResult,
+  transitionResult,
+  bulkPublishByExam,
+};

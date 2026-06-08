@@ -10,6 +10,7 @@ import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminExams from './pages/admin/AdminExams';
 import AdminPublicationOverview from './pages/admin/AdminPublicationOverview';
 import AdminResults from './pages/admin/AdminResults';
+import AdminResultDetail from './pages/admin/AdminResultDetail';
 import AdminUsers from './pages/admin/AdminUsers';
 
 import FacultyDashboard from './pages/faculty/FacultyDashboard';
@@ -49,6 +50,7 @@ export default function App() {
       <Route path="/admin/exams"     element={<RequireAuth role="admin"><AdminExams /></RequireAuth>} />
       <Route path="/admin/publication-overview" element={<RequireAuth role="admin"><AdminPublicationOverview /></RequireAuth>} />
       <Route path="/admin/results"   element={<RequireAuth role="admin"><AdminResults /></RequireAuth>} />
+      <Route path="/admin/results/:examId" element={<RequireAuth role="admin"><AdminResultDetail /></RequireAuth>} />
       <Route path="/admin/users"     element={<RequireAuth role="admin"><AdminUsers /></RequireAuth>} />
 
       {/* Faculty routes */}
