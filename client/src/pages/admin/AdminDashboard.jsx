@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import toast from 'react-hot-toast';
 import KPICard from '../../components/shared/KPICard';
@@ -18,29 +19,50 @@ export default function AdminDashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="flex items-center justify-center h-64 text-gray-400">Loading dashboard...</div>;
+  if (loading) return <div className="flex h-64 items-center justify-center text-gray-400">Loading dashboard...</div>;
   if (!data) return null;
 
   const { kpis, recentExams } = data;
   const gradeData = Object.entries(kpis.gradeDistribution || {}).map(([grade, count]) => ({ grade, count }));
+  const publicationRecordCount = Number(kpis.resultsPendingPublication || 0) + Number(kpis.finishedPublications || 0);
   const cards = [
-    { label: 'Upcoming Exams', value: kpis.upcomingExams, icon: '📅', color: 'blue' },
-    { label: 'Exams Completed', value: kpis.examsCompleted, icon: '✅', color: 'green' },
-    { label: 'Pending Publication', value: kpis.resultsPendingPublication, icon: '⏳', color: 'orange' },
-    { label: 'Finished Publication', value: kpis.finishedPublications ?? 0, icon: '📢', color: 'indigo' },
-    { label: 'Pass %', value: `${kpis.overallPassPercentage}%`, icon: '📈', color: 'teal' },
-    { label: 'Students', value: kpis.totalStudents, icon: '👨‍🎓', color: 'purple' },
-    { label: 'Faculty', value: kpis.totalFaculty, icon: '👨‍🏫', color: 'red' },
+    { label: 'Upcoming Exams', value: kpis.upcomingExams, icon: '\u{1F4C5}', color: 'blue' },
+    { label: 'Exams Completed', value: kpis.examsCompleted, icon: '\u2705', color: 'green' },
+    {
+      label: 'Publication Overview',
+      value: publicationRecordCount,
+      icon: '\u{1F4CA}',
+      color: 'indigo',
+      sub: 'Result records',
+      to: '/admin/publication-overview',
+    },
+    { label: 'Students', value: kpis.totalStudents, icon: '\u{1F393}', color: 'purple' },
+    { label: 'Faculty', value: kpis.totalFaculty, icon: '\u{1F3EB}', color: 'red' },
   ];
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
-        {cards.map((card) => (
-          <KPICard key={card.label} {...card} />
-        ))}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        {cards.map((card) => {
+          const content = <KPICard {...card} />;
+
+          if (card.to) {
+            return (
+              <Link
+                key={card.label}
+                to={card.to}
+                aria-label="Open exam publication overview"
+                className="block rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              >
+                {content}
+              </Link>
+            );
+          }
+
+          return <KPICard key={card.label} {...card} />;
+        })}
       </div>
 
       <div className={`grid grid-cols-1 gap-6 ${gradeData.length > 0 ? 'xl:grid-cols-5' : ''}`}>
@@ -63,12 +85,12 @@ export default function AdminDashboard() {
                   >
                     <div className="min-w-0">
                       <p className="truncate font-medium text-gray-900">{exam.subject}</p>
-                      <p className="text-xs text-gray-500">{exam.department} · Sem {exam.semester}</p>
+                      <p className="text-xs text-gray-500">{exam.department} - Sem {exam.semester}</p>
                     </div>
                     <div className="text-left md:text-right">
                       <p className="text-gray-700" title={exam.examDate}>{formatDisplayDate(exam.examDate)}</p>
                       <p className="text-xs text-gray-500">
-                        {formatDisplayTime(exam.startTime)} - {formatDisplayTime(exam.endTime)} · Hall {exam.hall}
+                        {formatDisplayTime(exam.startTime)} - {formatDisplayTime(exam.endTime)} - Hall {exam.hall}
                       </p>
                     </div>
                     <span className={`inline-flex w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${completed ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
@@ -85,7 +107,7 @@ export default function AdminDashboard() {
 
         {gradeData.length > 0 && (
           <div className="card xl:col-span-2">
-            <h2 className="font-semibold text-gray-800 mb-4">Grade Distribution</h2>
+            <h2 className="mb-4 font-semibold text-gray-800">Grade Distribution</h2>
             <ResponsiveContainer width="100%" height={240}>
               <BarChart data={gradeData}>
                 <XAxis dataKey="grade" />

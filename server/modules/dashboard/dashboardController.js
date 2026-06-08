@@ -1,8 +1,10 @@
-const { Op, fn, col, literal } = require('sequelize');
+const { Op, fn, col } = require('sequelize');
 const { Exam } = require('../exam/examModel');
 const { Result } = require('../result/resultModel');
 const { User } = require('../auth/authModel');
 const { buildCompletedExamWhere, buildNotCompletedExamWhere } = require('../../utils/examTiming');
+
+const round2 = (value) => parseFloat(Number(value || 0).toFixed(2));
 
 // ─── Admin Dashboard ───────────────────────────────────────────────────────────
 const getAdminDashboard = async (req, res, next) => {
@@ -63,6 +65,135 @@ const getAdminDashboard = async (req, res, next) => {
           gradeDistribution,
         },
         recentExams,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getAdminPublicationOverview = async (req, res, next) => {
+  try {
+    const completedExams = await Exam.findAll({
+      where: buildCompletedExamWhere(Op, {}, new Date()),
+      attributes: ['id', 'subject', 'department', 'semester', 'examDate', 'startTime', 'endTime', 'hall'],
+      include: [
+        {
+          model: Result,
+          as: 'results',
+          attributes: ['id', 'marks', 'grade', 'status'],
+          required: false,
+        },
+      ],
+      order: [['subject', 'ASC'], ['examDate', 'DESC'], ['startTime', 'ASC']],
+    });
+
+    const exams = completedExams.map((exam) => {
+      const plain = exam.toJSON();
+      const results = plain.results || [];
+      const totalStudents = results.length;
+      const draftCount = results.filter((result) => result.status === 'draft').length;
+      const readyCount = results.filter((result) => result.status === 'ready').length;
+      const publishedCount = results.filter((result) => result.status === 'published').length;
+      const failCount = results.filter((result) => result.grade === 'F').length;
+      const passCount = results.filter((result) => result.grade && result.grade !== 'F').length;
+      const totalMarks = results.reduce((sum, result) => sum + Number(result.marks || 0), 0);
+
+      return {
+        id: plain.id,
+        subject: plain.subject,
+        department: plain.department,
+        semester: plain.semester,
+        examDate: plain.examDate,
+        startTime: plain.startTime,
+        endTime: plain.endTime,
+        hall: plain.hall,
+        totalStudents,
+        draftCount,
+        readyCount,
+        publishedCount,
+        passCount,
+        failCount,
+        passRate: totalStudents > 0 ? round2((passCount / totalStudents) * 100) : 0,
+        averageMarks: totalStudents > 0 ? round2(totalMarks / totalStudents) : 0,
+      };
+    });
+
+    const subjects = exams.reduce((acc, exam) => {
+      if (!acc[exam.subject]) {
+        acc[exam.subject] = {
+          subject: exam.subject,
+          completedExams: 0,
+          totalStudents: 0,
+          draftCount: 0,
+          readyCount: 0,
+          publishedCount: 0,
+          passCount: 0,
+          failCount: 0,
+          totalMarks: 0,
+          exams: [],
+        };
+      }
+
+      acc[exam.subject].completedExams += 1;
+      acc[exam.subject].totalStudents += exam.totalStudents;
+      acc[exam.subject].draftCount += exam.draftCount;
+      acc[exam.subject].readyCount += exam.readyCount;
+      acc[exam.subject].publishedCount += exam.publishedCount;
+      acc[exam.subject].passCount += exam.passCount;
+      acc[exam.subject].failCount += exam.failCount;
+      acc[exam.subject].totalMarks += exam.averageMarks * exam.totalStudents;
+      acc[exam.subject].exams.push(exam);
+
+      return acc;
+    }, {});
+
+    const groupedSubjects = Object.values(subjects).map((subject) => ({
+      ...subject,
+      averageMarks: subject.totalStudents > 0
+        ? round2(subject.totalMarks / subject.totalStudents)
+        : 0,
+      passRate: subject.totalStudents > 0
+        ? round2((subject.passCount / subject.totalStudents) * 100)
+        : 0,
+      totalMarks: undefined,
+    }));
+
+    const summary = exams.reduce((acc, exam) => {
+      acc.totalStudents += exam.totalStudents;
+      acc.draftCount += exam.draftCount;
+      acc.readyCount += exam.readyCount;
+      acc.publishedCount += exam.publishedCount;
+      acc.passCount += exam.passCount;
+      acc.failCount += exam.failCount;
+      acc.totalMarks += exam.averageMarks * exam.totalStudents;
+      return acc;
+    }, {
+      completedExams: exams.length,
+      totalStudents: 0,
+      draftCount: 0,
+      readyCount: 0,
+      publishedCount: 0,
+      passCount: 0,
+      failCount: 0,
+      totalMarks: 0,
+    });
+
+    const summaryPayload = {
+      ...summary,
+      averageMarks: summary.totalStudents > 0
+        ? round2(summary.totalMarks / summary.totalStudents)
+        : 0,
+      passRate: summary.totalStudents > 0
+        ? round2((summary.passCount / summary.totalStudents) * 100)
+        : 0,
+      totalMarks: undefined,
+    };
+
+    res.json({
+      overview: {
+        summary: summaryPayload,
+        subjects: groupedSubjects,
       },
     });
   } catch (error) {
@@ -178,4 +309,4 @@ const getDashboard = (req, res, next) => {
   res.status(400).json({ error: { code: 'INVALID_ROLE', message: 'Unknown role' } });
 };
 
-module.exports = { getDashboard };
+module.exports = { getDashboard, getAdminPublicationOverview };

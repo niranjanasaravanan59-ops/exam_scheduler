@@ -8,6 +8,7 @@ import LoginPage from './pages/LoginPage';
 
 import AdminDashboard from './pages/admin/AdminDashboard';
 import AdminExams from './pages/admin/AdminExams';
+import AdminPublicationOverview from './pages/admin/AdminPublicationOverview';
 import AdminResults from './pages/admin/AdminResults';
 import AdminUsers from './pages/admin/AdminUsers';
 
@@ -46,6 +47,7 @@ export default function App() {
       {/* Admin routes */}
       <Route path="/admin/dashboard" element={<RequireAuth role="admin"><AdminDashboard /></RequireAuth>} />
       <Route path="/admin/exams"     element={<RequireAuth role="admin"><AdminExams /></RequireAuth>} />
+      <Route path="/admin/publication-overview" element={<RequireAuth role="admin"><AdminPublicationOverview /></RequireAuth>} />
       <Route path="/admin/results"   element={<RequireAuth role="admin"><AdminResults /></RequireAuth>} />
       <Route path="/admin/users"     element={<RequireAuth role="admin"><AdminUsers /></RequireAuth>} />
 

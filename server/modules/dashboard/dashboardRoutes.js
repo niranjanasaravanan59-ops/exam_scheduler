@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { getDashboard } = require('./dashboardController');
-const { verifyToken } = require('../../middleware/authMiddleware');
+const { getDashboard, getAdminPublicationOverview } = require('./dashboardController');
+const { verifyToken, requireRole } = require('../../middleware/authMiddleware');
 
 const preventDashboardCaching = (req, res, next) => {
   delete req.headers['if-none-match'];
@@ -16,5 +16,12 @@ const preventDashboardCaching = (req, res, next) => {
 };
 
 router.get('/', preventDashboardCaching, verifyToken, getDashboard);
+router.get(
+  '/publication-overview',
+  preventDashboardCaching,
+  verifyToken,
+  requireRole('admin'),
+  getAdminPublicationOverview
+);
 
 module.exports = router;
