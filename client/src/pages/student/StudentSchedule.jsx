@@ -1,16 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { useLocation } from 'react-router-dom';
 import { fetchExams } from '../../features/exams/examSlice';
 import { formatDisplayDate, formatDisplayTime, isExamEnded } from '../../utils/dateTime';
 
 export default function StudentSchedule() {
   const dispatch = useDispatch();
+  const location = useLocation();
   const { items: exams, loading } = useSelector((s) => s.exams);
   const [search, setSearch] = useState('');
 
   useEffect(() => { dispatch(fetchExams()); }, [dispatch]);
 
   const now = new Date();
+  const searchParams = new URLSearchParams(location.search);
+  const tab = searchParams.get('tab');
+  const showUpcomingOnly = tab === 'upcoming';
+  const showCompletedOnly = tab === 'completed';
+
   const filtered = exams.filter((e) =>
     e.subject.toLowerCase().includes(search.toLowerCase())
   );
@@ -44,26 +51,35 @@ export default function StudentSchedule() {
         <div className="text-center py-12 text-gray-400">Loading...</div>
       ) : (
         <>
-          <section>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-              Upcoming ({upcoming.length})
-            </h2>
-            {upcoming.length === 0 ? (
-              <p className="text-gray-400 text-sm">No upcoming exams.</p>
-            ) : (
-              <div className="space-y-2">
-                {upcoming.map((e) => <ExamCard key={e.id} exam={e} />)}
-              </div>
-            )}
-          </section>
-          {past.length > 0 && (
+          {!showCompletedOnly && (
             <section>
-              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wide mb-3">
-                Past ({past.length})
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                Upcoming ({upcoming.length})
               </h2>
-              <div className="space-y-2 opacity-60">
-                {past.map((e) => <ExamCard key={e.id} exam={e} />)}
-              </div>
+              {upcoming.length === 0 ? (
+                <p className="text-gray-400 text-sm">No upcoming exams.</p>
+              ) : (
+                <div className="space-y-2">
+                  {upcoming.map((e) => <ExamCard key={e.id} exam={e} />)}
+                </div>
+              )}
+            </section>
+          )}
+
+          {!showUpcomingOnly && (
+            <section>
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                {showCompletedOnly ? 'Completed Exams' : 'Past'} ({past.length})
+              </h2>
+              {past.length === 0 ? (
+                <p className="text-gray-400 text-sm">
+                  {showCompletedOnly ? 'No completed exams.' : 'No past exams.'}
+                </p>
+              ) : (
+                <div className="space-y-2 opacity-60">
+                  {past.map((e) => <ExamCard key={e.id} exam={e} />)}
+                </div>
+              )}
             </section>
           )}
         </>

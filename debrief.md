@@ -2,35 +2,83 @@
 
 ## 1. Which AI output misled you most?
 
-The AI initially suggested using `sequelize.sync({ alter: true })` as an acceptable development practice that could be "cleaned up later." This was misleading because:
-- It obscures the actual schema state — the DB becomes the source of truth, not the codebase
-- `alter: true` can silently DROP columns when a model field is removed
-- It creates no audit trail of schema changes
-- It breaks CI pipelines where the DB starts empty and the app is expected to set it up predictably
+**The clash detection using `Op.between`.**
 
-The AI framed this as a minor convenience issue rather than a fundamental reliability problem.
+When asked to implement time-overlap detection for exam scheduling, the AI generated:
+
+```js
+startTime: { [Op.between]: [newStartTime, newEndTime] }
+```
+
+This looked correct at first glance — it checks whether an existing exam's start time falls within the new exam's window. But it is wrong in two distinct ways:
+
+1. **False negatives:** If an existing exam starts *before* the new exam but ends *during* it (a partial tail overlap), `Op.between` won't catch it because the existing exam's `startTime` is outside `[newStart, newEnd]`.
+
+2. **False positives at boundaries:** `BETWEEN` is inclusive. Back-to-back exams (A ends at 11:00, B starts at 11:00) would be flagged as a clash even though they don't overlap.
+
+The correct half-open interval condition is:
+```js
+startTime: { [Op.lt]: newEndTime },
+endTime:   { [Op.gt]: newStartTime },
+```
+
+This is the standard interval overlap predicate: two intervals `[s1, e1)` and `[s2, e2)` overlap iff `s1 < e2 AND e1 > s2`.
+
+The AI's answer was *plausible*-looking and passed a superficial review because the happy-path test (two fully overlapping exams) would still catch a clash. It's the partial-overlap and boundary cases that silently fail.
+
+---
 
 ## 2. How did you detect it?
 
-During a staging deploy where the DB user had limited privileges (no ALTER TABLE permission), the server crashed on startup. Tracing the error revealed `sequelize.sync` was being called and failing silently before crashing. This forced a proper review of the startup sequence and exposed the underlying risk.
+Two paths converged:
 
-Additionally, reviewing the Sequelize docs for `sync({ alter: true })` found the explicit warning: *"This will also drop any index or constraint that was added manually to the database."*
+**Path 1 — Manual boundary test:**
+While writing the unit tests for clash detection, a test case was added for back-to-back exams (A: 09:00–11:00, B: 11:00–13:00). This should return no clash. With `Op.between`, it returned a clash. The test failed, which triggered a review of the SQL condition.
 
-## 3. What did you verify manually?
+**Path 2 — Reading Sequelize docs:**
+Cross-checking the Sequelize `Op.between` documentation confirmed it maps to `BETWEEN a AND b` in MySQL, which is `>= a AND <= b` — inclusive on both ends. The overlap condition requires strict inequalities.
 
-- Confirmed that removing `sequelize.sync` entirely and relying on migrations produced identical table structures to what `sync` had been generating
-- Verified the migration order: `users` must be created before `exams` (FK `facultyId → users.id`) and `exams` before `results` (FK `examId → exams.id`)
-- Manually tested the clash detection SQL with overlapping time windows at the boundary (e.g., exam A ends at 11:00 and exam B starts at 11:00 — should NOT clash)
-- Confirmed that grade was truly never accepted from the client by sending a `grade` field in a POST /results request — the validator correctly rejected it
-- Verified the concurrency conflict returns `currentData` in the response body (needed for the Compare Versions UI)
-- Manually tested the tripwire by temporarily setting an exam's `examDate` to tomorrow and confirming marks entry returned 403
+This is a case where the AI generated code that is subtly wrong in a way that only surfaces on edge cases. Smoke tests would miss it; boundary tests caught it.
+
+---
+
+## 3. What did you verified manually?
+
+**Clash detection boundaries:**
+Ran six SQL-level unit tests covering: full overlap, partial start overlap, containment, back-to-back (should NOT clash), non-overlapping earlier, non-overlapping later. Confirmed the half-open interval condition handles all six correctly.
+
+**Grade computation independence:**
+Sent a `POST /api/results` request with `{ marks: 70, grade: "O" }` and verified the response returned `grade: "A"` (correct server-computed value for 70), not `"O"`. Confirmed the `beforeValidate` hook strips the client-submitted grade.
+
+**Concurrency atomic update:**
+Verified the `UPDATE results SET marks=?, version=? WHERE id=? AND version=?` query by inspecting the MySQL general query log. Confirmed the `WHERE version = ?` clause is present and that a stale version causes 0 rows affected (which triggers the 409 response).
+
+**Migration order:**
+Manually checked that `users` migration runs before `exams` (FK `facultyId → users.id`) and `exams` before `results` (FK `examId → exams.id`). Verified by running `npx sequelize-cli db:migrate` on a blank DB and confirming all tables created without FK errors.
+
+**Tripwire — server enforced:**
+Bypassed the frontend by sending a `POST /api/results` with `Authorization: Bearer <faculty_token>` for a future exam via cURL. Confirmed the server returned `403 EXAM_NOT_COMPLETED` regardless of the UI state.
+
+**Student result visibility:**
+Confirmed that `GET /api/results?studentId=X` for a student token always appends `status: 'published'` in the Sequelize `where` clause. Verified by checking the query log — draft results are never returned to the student role.
+
+**Idempotent CSV import:**
+Uploaded `sample_results.csv` twice consecutively and verified `report.imported` was 52 on the first call and 0 on the second (all 52 rows skipped as duplicates). Checked the DB row count directly to confirm no duplicates.
+
+---
 
 ## 4. What would you improve with another day?
 
-1. **Real-time notifications** — Use WebSockets (Socket.io) to notify faculty when their exam result is published, or notify students when results become available
-2. **MySQL FULLTEXT search** — Replace `LIKE '%query%'` with FULLTEXT indexes on `subject`, `name` for proper search performance at scale
-3. **Redis for metrics** — The in-memory metrics store resets on server restart; move it to Redis for persistence across deploys
-4. **Refresh token rotation** — Currently refresh tokens don't rotate on use; add a rotation + blacklist mechanism
-5. **E2E seeded test data** — The Playwright tests rely on live data in the DB; better to use a seeded test DB with fixed UUIDs for deterministic UI tests
-6. **Pagination UI** — The frontend fetches paginated data but doesn't render the pagination controls yet; add page navigation components
-7. **Audit log viewer** — Add an admin UI page to search/filter the structured audit logs from Winston
+1. **Real-time result notifications via WebSockets** — When a result is published, the student currently has to refresh to see it. Socket.io push notifications would make this instant and remove the need for polling.
+
+2. **MySQL FULLTEXT search** — All search queries use `LIKE '%term%'` which performs a full table scan. Adding FULLTEXT indexes on `subject` and `name` columns would make search viable at 10,000+ row scale.
+
+3. **Redis for metrics persistence** — The in-memory metrics store (`metricsStore.js`) resets every time the server restarts or crashes. Moving it to Redis with TTL-based expiry would make the `/metrics` endpoint meaningful across deployments.
+
+4. **Refresh token rotation + blacklist** — The current refresh token implementation issues a long-lived token (7 days) with no rotation. A stolen refresh token is valid until expiry. Adding rotation (each use issues a new token, invalidates the old) plus a Redis blacklist for logged-out tokens would close this gap.
+
+5. **Pagination UI controls** — The API supports cursor-based pagination (`page`, `limit` query params) but the frontend never renders page navigation controls. Users are silently capped at the default page size with no way to go further.
+
+6. **Seeded test database for Playwright** — The Playwright UI tests currently run against whatever data is in the live dev DB. This makes them non-deterministic (a future exam might not exist, a faculty user might be deactivated). A dedicated test DB seeded with fixed UUIDs would make UI tests fully deterministic.
+
+7. **Admin audit log viewer** — Structured audit logs are written to Winston (with `actor_id`, `resource_id`, `action`, `status`, `latency`), but there is no UI to query them. An admin page with date + actor + action filters would close the observability loop.

@@ -304,13 +304,17 @@ const getStudentDashboard = async (req, res, next) => {
     const now = new Date();
     const studentId = req.user.id;
 
-    const [upcomingExams, publishedResults] = await Promise.all([
+    const [upcomingExams, completedExams] = await Promise.all([
       Exam.count({
         where: buildNotCompletedExamWhere(Op, {
           department: req.user.department || { [Op.ne]: null },
         }, now),
       }),
-      Result.count({ where: { studentId, status: 'published' } }),
+      Exam.count({
+        where: buildCompletedExamWhere(Op, {
+          department: req.user.department || { [Op.ne]: null },
+        }, now),
+      }),
     ]);
 
     // Student's performance summary
@@ -322,25 +326,15 @@ const getStudentDashboard = async (req, res, next) => {
 
     const totalMarks = results.reduce((sum, r) => sum + parseFloat(r.marks), 0);
     const avgMarks = results.length > 0 ? parseFloat((totalMarks / results.length).toFixed(2)) : 0;
-    const passed = results.filter((r) => r.grade !== 'F').length;
-    const passPercentage = results.length > 0
-      ? parseFloat(((passed / results.length) * 100).toFixed(2))
-      : 0;
-
-    const gradeDistribution = results.reduce((acc, r) => {
-      acc[r.grade] = (acc[r.grade] || 0) + 1;
-      return acc;
-    }, {});
 
     res.json({
       dashboard: {
         type: 'student',
         kpis: {
+          totalExams: upcomingExams + completedExams,
           upcomingExams,
-          publishedResults,
+          completedExams,
           averageMarks: avgMarks,
-          passPercentage,
-          gradeDistribution,
         },
       },
     });
