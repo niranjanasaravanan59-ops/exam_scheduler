@@ -7,10 +7,10 @@ import { GradeBadge, StatusBadge } from '../../components/shared/Badges';
 import { formatDisplayDate, formatDisplayTime } from '../../utils/dateTime';
 
 const SUMMARY_ICONS = {
-  students: '\u{1F393}',
-  present: '\u2705',
-  absent: '\u2715',
-  average: '\u{1F4CA}',
+  students: 'graduation',
+  present: 'check',
+  absent: 'alert',
+  average: 'chart',
 };
 
 function AttendanceBadge({ status }) {

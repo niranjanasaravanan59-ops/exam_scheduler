@@ -7,6 +7,7 @@ const { Attendance, ATTENDANCE_STATUSES } = require('../attendance/attendanceMod
 const { sequelize } = require('../../config/db');
 const logger = require('../../config/logger');
 const { isExamCompletedAt } = require('../../utils/examTiming');
+const { sendResultNotification } = require('../../utils/emailService');
 
 const isStudentMarkedAbsent = async (studentId, examId, transaction = null) => {
   const attendance = await Attendance.findOne({
@@ -602,6 +603,30 @@ const transitionResult = async (req, res, next) => {
       meta: { workflow: `${result.status} → ${action}` },
     });
 
+    // ── Send email notification to student when result is published ──
+    if (action === 'published') {
+      try {
+        const student = await User.findByPk(result.studentId, {
+          attributes: ['name', 'email'],
+        });
+        if (student) {
+          await sendResultNotification({
+            studentEmail: student.email,
+            studentName: student.name,
+            subject: result.exam.subject,
+            examDate: result.exam.examDate,
+            marks: result.marks,
+            grade: result.grade,
+            department: result.exam.department,
+            semester: result.exam.semester,
+          });
+        }
+      } catch (emailErr) {
+        // Log but do NOT fail the request if email sending fails
+        logger.error('Failed to send result notification email', { error: emailErr.message, resultId: result.id });
+      }
+    }
+
     res.json({ message: `Result transitioned to ${action}`, result });
   } catch (error) {
     next(error);
@@ -656,6 +681,44 @@ const bulkPublishByExam = async (req, res, next) => {
       latency: Date.now() - start,
       meta: { count: updated },
     });
+
+    // ── Send email notifications to all newly published students (fire-and-forget) ──
+    if (updated > 0) {
+      try {
+        const publishedResults = await Result.findAll({
+          where: { examId, status: 'published' },
+          include: [
+            {
+              model: User,
+              as: 'student',
+              attributes: ['name', 'email'],
+            },
+          ],
+          attributes: ['id', 'marks', 'grade'],
+        });
+
+        const emailPromises = publishedResults.map((r) => {
+          if (!r.student) return Promise.resolve();
+          return sendResultNotification({
+            studentEmail: r.student.email,
+            studentName: r.student.name,
+            subject: exam.subject,
+            examDate: exam.examDate,
+            marks: r.marks,
+            grade: r.grade,
+            department: exam.department,
+            semester: exam.semester,
+          }).catch((emailErr) => {
+            logger.error('Failed to send bulk result notification', { error: emailErr.message, resultId: r.id });
+          });
+        });
+
+        // Do not await — respond immediately, emails send in background
+        Promise.all(emailPromises).catch(() => {});
+      } catch (emailErr) {
+        logger.error('Failed to fetch results for bulk email notifications', { error: emailErr.message, examId });
+      }
+    }
 
     res.json({
       message: `${updated} results published for exam`,
